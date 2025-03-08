@@ -1,0 +1,3 @@
+usage: band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads
+usage: band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads
+usage: band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads

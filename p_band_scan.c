@@ -91,7 +91,7 @@ void *worker(void *arg){
         
     }
 
-    return;
+    return NULL;
 }
 
 
@@ -111,7 +111,7 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
   double start = get_seconds();
   unsigned long long tstart = get_cycle_count();
 
-  double filter_coeffs[filter_order + 1];
+  //double filter_coeffs[filter_order + 1];
   double band_power[num_bands];
   
   pthread_t threads[num_threads];
@@ -119,7 +119,7 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
 
   int bands_per_thread = num_bands / num_threads;
 
-  for (int thread = 0; thread < num_bands; thread++) {
+  for (int thread = 0; thread < num_threads; thread++) {
 
     //set all the arguments
     args[thread].sig = sig;
@@ -153,8 +153,16 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
 
   }
 
+    for (int t = 0; t < num_threads; t++) {
+            pthread_join(threads[t], NULL);
+        }
+
+    // Timing end
+    //double end = get_seconds();
+
   unsigned long long tend = get_cycle_count();
   double end = get_seconds();
+  printf("Parallel processing time: %lf seconds\n", end - start);
 
   resources rend;
   get_resources(&rend,THIS_PROCESS);
@@ -238,7 +246,7 @@ int main(int argc, char* argv[]) {
   int filter_order = atoi(argv[4]);
   int num_bands    = atoi(argv[5]);
 
-  int num_threads = atoi(argv[7]);
+  int num_threads = atoi(argv[6]);
 
   assert(Fs > 0.0);
   assert(filter_order > 0 && !(filter_order & 0x1));
@@ -285,7 +293,7 @@ bands:    %d\n",
 
   double start = 0;
   double end   = 0;
-  if (analyze_signal(sig, filter_order, num_bands, &start, &end)) {
+  if (analyze_signal(sig, filter_order, num_bands, &start, &end, num_threads)) {
     printf("POSSIBLE ALIENS %lf-%lf HZ (CENTER %lf HZ)\n", start, end, (end + start) / 2.0);
   } else {
     printf("no aliens\n");

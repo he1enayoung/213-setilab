@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <assert.h>
+#include <pthread.h>  // pthread api
 
 #include "filter.h"
 #include "signal.h"
@@ -12,8 +13,18 @@
 #define ALIENS_LOW  50000.0
 #define ALIENS_HIGH 150000.0
 
+typedef struct {
+    signal *sig;
+    int filter_order;
+    int num_bands;
+    double bandwidth;
+    double *band_power;
+    int start_band;
+    int end_band;
+} thread_args_t;
+
 void usage() {
-  printf("usage: band_scan text|bin|mmap signal_file Fs filter_order num_bands\n");
+  printf("usage: band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads\n");
 }
 
 double avg_power(double* data, int num) {
@@ -57,8 +68,34 @@ void remove_dc(double* data, int num) {
   }
 }
 
+void *worker(void *arg){
 
-int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, double* ub) {
+    thread_args_t *args = (thread_args_t *)arg;
+    double coefficients[args->filter_order + 1];
+
+    for (int b = args->start_band; b < args->end_band; b++){
+            // // Make the filter
+        generate_band_pass(args->sig->Fs,
+                        b * args->bandwidth + 0.0001, // keep within limits
+                        (b + 1) * args->bandwidth - 0.0001,
+                        args->filter_order,
+                        coefficients);
+        hamming_window(args->filter_order,coefficients);
+
+        // Convolve
+        convolve_and_compute_power(args->sig->num_samples,
+                                args->sig->data,
+                                args->filter_order,
+                                coefficients,
+                                &(args->band_power[b]));
+        
+    }
+
+    return;
+}
+
+
+int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, double* ub, int num_threads) {
 
   double Fc        = (sig->Fs) / 2;
   double bandwidth = Fc / num_bands;
@@ -76,21 +113,43 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
 
   double filter_coeffs[filter_order + 1];
   double band_power[num_bands];
-  for (int band = 0; band < num_bands; band++) {
-    // Make the filter
-    generate_band_pass(sig->Fs,
-                       band * bandwidth + 0.0001, // keep within limits
-                       (band + 1) * bandwidth - 0.0001,
-                       filter_order,
-                       filter_coeffs);
-    hamming_window(filter_order,filter_coeffs);
+  
+  pthread_t threads[num_threads];
+  thread_args_t args[num_threads];
 
-    // Convolve
-    convolve_and_compute_power(sig->num_samples,
-                               sig->data,
-                               filter_order,
-                               filter_coeffs,
-                               &(band_power[band]));
+  int bands_per_thread = num_bands / num_threads;
+
+  for (int thread = 0; thread < num_bands; thread++) {
+
+    //set all the arguments
+    args[thread].sig = sig;
+    args[thread].filter_order = filter_order;
+    args[thread].num_bands = num_bands;
+    args[thread].bandwidth = bandwidth;
+    args[thread].band_power = band_power;
+    args[thread].start_band = thread * bands_per_thread;
+    if (thread == num_threads - 1) {
+    args[thread].end_band = num_bands;
+    } else {
+    args[thread].end_band = (thread + 1) * bands_per_thread;
+    }
+
+    pthread_create(&threads[thread], NULL, worker, &args[thread]);
+
+    // // Make the filter
+    // generate_band_pass(sig->Fs,
+    //                    band * bandwidth + 0.0001, // keep within limits
+    //                    (band + 1) * bandwidth - 0.0001,
+    //                    filter_order,
+    //                    filter_coeffs);
+    // hamming_window(filter_order,filter_coeffs);
+
+    // // Convolve
+    // convolve_and_compute_power(sig->num_samples,
+    //                            sig->data,
+    //                            filter_order,
+    //                            filter_coeffs,
+    //                            &(band_power[band]));
 
   }
 
@@ -168,7 +227,7 @@ Context switches %ld\n",
 
 int main(int argc, char* argv[]) {
 
-  if (argc != 6) {
+  if (argc != 7) {
     usage();
     return -1;
   }
@@ -178,6 +237,8 @@ int main(int argc, char* argv[]) {
   double Fs        = atof(argv[3]);
   int filter_order = atoi(argv[4]);
   int num_bands    = atoi(argv[5]);
+
+  int num_threads = atoi(argv[7]);
 
   assert(Fs > 0.0);
   assert(filter_order > 0 && !(filter_order & 0x1));
